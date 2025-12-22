@@ -10,6 +10,7 @@ from backend.ai_service import generate_action_plan
 import json
 import os
 import shutil
+from functools import lru_cache
 import uuid
 import asyncio
 from fastapi import Depends
@@ -94,19 +95,21 @@ async def create_issue(
         "action_plan": action_plan
     }
 
-@app.get("/api/responsibility-map")
-def get_responsibility_map():
-    # In a real app, this might read from the file or database
-    # For MVP, we can return the structure directly or read the file
-
+@lru_cache(maxsize=1)
+def _load_responsibility_map():
     # Assuming the data folder is at the root level relative to where backend is run
     # Adjust path as necessary. If running from root, it is "data/responsibility_map.json"
     file_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "responsibility_map.json")
 
+    with open(file_path, "r") as f:
+        return json.load(f)
+
+@app.get("/api/responsibility-map")
+def get_responsibility_map():
+    # In a real app, this might read from the file or database
+    # For MVP, we can return the structure directly or read the file
     try:
-        with open(file_path, "r") as f:
-            data = json.load(f)
-        return data
+        return _load_responsibility_map()
     except FileNotFoundError:
         return {"error": "Data file not found"}
 
