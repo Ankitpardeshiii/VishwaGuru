@@ -44,7 +44,7 @@ Use this checklist when deploying VishwaGuru to production.
   - **Name**: `vishwaguru-backend`
   - **Runtime**: `Python 3`
   - **Build Command**: `pip install -r backend/requirements.txt`
-  - **Start Command**: `cd backend && python __main__.py`
+  - **Start Command**: `python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
 
 - [ ] Add environment variables:
   - `PYTHON_VERSION` = `3.12.0`

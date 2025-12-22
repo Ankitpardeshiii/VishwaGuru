@@ -134,8 +134,8 @@ See detailed guides:
 
 1. **Backend (Render)**:
    - Build: `pip install -r backend/requirements.txt`
-   - Start: `cd backend && python __main__.py`
-   - Add PostgreSQL database and set environment variables
+   - Start: `python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
+   - Add Neon database connection string and set environment variables
 
 2. **Frontend (Netlify)**:
    - Base: `frontend/`, Build: `npm run build`, Publish: `frontend/dist`

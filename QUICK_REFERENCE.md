@@ -12,7 +12,7 @@
 ### Backend (Render)
 ```bash
 Build Command: pip install -r backend/requirements.txt
-Start Command: cd backend && python __main__.py
+Start Command: python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
 
 Environment Variables:
 - TELEGRAM_BOT_TOKEN (from @BotFather)

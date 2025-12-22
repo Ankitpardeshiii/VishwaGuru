@@ -74,7 +74,7 @@ pip install -r backend/requirements.txt
 
 **Start Command**:
 ```bash
-cd backend && python __main__.py
+python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
 ```
 
 ### Step 3: Set Environment Variables

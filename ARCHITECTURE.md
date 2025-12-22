@@ -114,7 +114,7 @@ Deployment Commands:
 
 BACKEND (Render):
   Build:  pip install -r backend/requirements.txt
-  Start:  cd backend && python __main__.py
+  Start:  python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
 
 FRONTEND (Netlify):
   Build:  npm run build
