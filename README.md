@@ -110,6 +110,17 @@ The Telegram bot runs as part of the FastAPI application lifecycle, so it starts
 *   **AI**: Google Gemini (google-generativeai)
 *   **Bot**: python-telegram-bot
 
+## Deployment
+
+### Deploying to Render
+
+For detailed instructions on deploying the backend to Render, see [RENDER_DEPLOYMENT.md](./RENDER_DEPLOYMENT.md).
+
+**Quick Summary**:
+- **Build Command**: `pip install -r backend/requirements.txt`
+- **Start Command**: `cd backend && python __main__.py`
+- **Environment Variables**: Set `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, and attach a PostgreSQL database
+
 ## Contributing
 
 1.  Fork the repository.
