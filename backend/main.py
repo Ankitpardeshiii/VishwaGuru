@@ -78,6 +78,7 @@ def save_issue_db(db: Session, issue: Issue):
 async def create_issue(
     description: str = Form(...),
     category: str = Form(...),
+    user_email: str = Form(None),
     image: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
@@ -98,7 +99,8 @@ async def create_issue(
         description=description,
         category=category,
         image_path=image_path,
-        source="web"
+        source="web",
+        user_email=user_email
     )
 
     # Offload blocking DB operations to threadpool
