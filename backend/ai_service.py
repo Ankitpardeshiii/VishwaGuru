@@ -2,6 +2,7 @@ import os
 import google.generativeai as genai
 from typing import Optional
 import warnings
+from async_lru import alru_cache
 
 # Suppress deprecation warnings from google.generativeai
 warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
@@ -62,14 +63,17 @@ async def generate_action_plan(issue_description: str, category: str, image_path
             "email_body": f"Respected Authority,\n\nI am writing to bring to your attention a {category} issue: {issue_description}.\n\nPlease take necessary action.\n\nSincerely,\nCitizen"
         }
 
+@alru_cache(maxsize=100)
 async def chat_with_civic_assistant(query: str) -> str:
     """
     Chat with the civic assistant.
     """
-    if not client:
+    if not api_key:
         return "I am currently offline. Please try again later."
 
     try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+
         prompt = f"""
         You are VishwaGuru, a helpful civic assistant for Indian citizens.
         User Query: {query}
@@ -79,10 +83,7 @@ async def chat_with_civic_assistant(query: str) -> str:
         Keep answers concise and helpful.
         """
 
-        response = await client.aio.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=prompt
-        )
+        response = await model.generate_content_async(prompt)
         return response.text.strip()
     except Exception as e:
         print(f"Gemini Chat Error: {e}")
