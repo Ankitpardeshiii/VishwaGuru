@@ -43,6 +43,15 @@ try:
         except Exception:
             # Index likely already exists
             pass
+
+        # Add index on created_at for faster sorting
+        try:
+            conn.execute(text("CREATE INDEX ix_issues_created_at ON issues (created_at)"))
+            print("Migrated database: Added index on created_at column.")
+        except Exception:
+            # Index likely already exists
+            pass
+
         conn.commit()
         print("Migrated database: Added upvotes column.")
 except Exception as e:
