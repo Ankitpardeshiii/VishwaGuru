@@ -53,6 +53,14 @@ try:
             # Index likely already exists
             pass
 
+        # Add index on status for faster filtering
+        try:
+            conn.execute(text("CREATE INDEX ix_issues_status ON issues (status)"))
+            print("Migrated database: Added index on status column.")
+        except Exception:
+            # Index likely already exists
+            pass
+
         conn.commit()
         print("Migrated database: Added upvotes column.")
 except Exception as e:
