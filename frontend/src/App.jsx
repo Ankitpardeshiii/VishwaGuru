@@ -3,8 +3,9 @@ import { getMaharashtraRepContacts } from './api/location';
 import PotholeDetector from './PotholeDetector';
 import GarbageDetector from './GarbageDetector';
 import VandalismDetector from './VandalismDetector';
+import FloodDetector from './FloodDetector';
 import ChatWidget from './components/ChatWidget';
-import { AlertTriangle, MapPin, Search, Activity, Camera, Trash2, ThumbsUp, Brush } from 'lucide-react';
+import { AlertTriangle, MapPin, Search, Activity, Camera, Trash2, ThumbsUp, Brush, Droplets } from 'lucide-react';
 
 // Get API URL from environment variable, fallback to relative URL for local dev
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -62,6 +63,16 @@ const Home = ({ setView, fetchResponsibilityMap, recentIssues, handleUpvote }) =
           <Brush size={24} />
         </div>
         <span className="font-semibold text-indigo-800">Report Graffiti</span>
+      </button>
+
+      <button
+        onClick={() => setView('flood')}
+        className="flex flex-col items-center justify-center bg-cyan-50 border-2 border-cyan-100 p-4 rounded-xl hover:bg-cyan-100 transition shadow-sm h-32"
+      >
+        <div className="bg-cyan-500 text-white p-3 rounded-full mb-2">
+          <Droplets size={24} />
+        </div>
+        <span className="font-semibold text-cyan-800">Detect Flood</span>
       </button>
     </div>
 
@@ -556,6 +567,14 @@ function App() {
                &larr; Back
             </button>
             <VandalismDetector />
+          </div>
+        )}
+        {view === 'flood' && (
+          <div className="flex flex-col h-full">
+             <button onClick={() => setView('home')} className="self-start text-blue-600 mb-2">
+               &larr; Back
+            </button>
+            <FloodDetector />
           </div>
         )}
 

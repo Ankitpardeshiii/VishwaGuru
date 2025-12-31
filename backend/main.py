@@ -25,6 +25,7 @@ from bot import run_bot
 from pothole_detection import detect_potholes
 from garbage_detection import detect_garbage
 from vandalism_detection import detect_vandalism
+from flooding_detection import detect_flooding
 from PIL import Image
 import io
 from sqlalchemy import text
@@ -270,6 +271,26 @@ async def detect_pothole_endpoint(image: UploadFile = File(...)):
     except Exception as e:
         print(f"Detection error: {e}")
         raise HTTPException(status_code=500, detail="Error processing image for detection")
+
+    return {"detections": detections}
+
+@app.post("/api/detect-flooding")
+async def detect_flooding_endpoint(image: UploadFile = File(...)):
+    # Read image
+    contents = await image.read()
+    # Convert to PIL Image
+    try:
+        pil_image = Image.open(io.BytesIO(contents))
+    except Exception:
+         raise HTTPException(status_code=400, detail="Invalid image file")
+
+    # Run detection (blocking, so run in threadpool)
+    try:
+        detections = await run_in_threadpool(detect_flooding, pil_image)
+    except Exception as e:
+        print(f"Detection error: {e}")
+        # Return empty detections on error instead of 500 to keep UI responsive
+        return {"detections": [], "error": str(e)}
 
     return {"detections": detections}
 
