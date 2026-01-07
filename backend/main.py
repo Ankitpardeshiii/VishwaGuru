@@ -152,19 +152,46 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="VishwaGuru Backend", lifespan=lifespan)
 
-# CORS Configuration
+# CORS Configuration - Security Enhanced
 # For separate frontend/backend deployment (e.g., Netlify + Render)
-# Set FRONTEND_URL environment variable to your Netlify URL
+# FRONTEND_URL environment variable is REQUIRED for security
 # Example: https://your-app.netlify.app
-frontend_url = os.environ.get("FRONTEND_URL", "*")
-allowed_origins = [frontend_url] if frontend_url != "*" else ["*"]
+
+frontend_url = os.environ.get("FRONTEND_URL")
+if not frontend_url:
+    raise ValueError(
+        "FRONTEND_URL environment variable is required for security. "
+        "Set it to your frontend URL (e.g., https://your-app.netlify.app). "
+        "For development, use http://localhost:5173 or similar."
+    )
+
+# Validate URL format (basic check)
+if not (frontend_url.startswith("http://") or frontend_url.startswith("https://")):
+    raise ValueError(
+        f"FRONTEND_URL must be a valid HTTP/HTTPS URL. Got: {frontend_url}"
+    )
+
+# Build allowed origins list
+allowed_origins = [frontend_url]
+
+# Allow localhost origins for development
+if os.environ.get("ENVIRONMENT", "").lower() != "production":
+    # Add common development origins
+    dev_origins = [
+        "http://localhost:3000",  # React default
+        "http://localhost:5173",  # Vite default
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",  # Alternative dev port
+    ]
+    allowed_origins.extend(dev_origins)
 
 # Allow CORS for frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
