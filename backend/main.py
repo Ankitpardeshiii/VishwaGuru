@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.concurrency import run_in_threadpool
@@ -30,6 +30,7 @@ from PIL import Image
 from init_db import migrate_db
 import logging
 import time
+import httpx
 
 # Configure structured logging
 logging.basicConfig(
@@ -52,6 +53,10 @@ Base.metadata.create_all(bind=engine)
 async def lifespan(app: FastAPI):
     # Startup: Migrate DB
     migrate_db()
+
+    # Startup: Initialize Shared HTTP Client for external APIs (Connection Pooling)
+    app.state.http_client = httpx.AsyncClient()
+    logger.info("Shared HTTP Client initialized.")
 
     # Startup: Initialize AI services
     try:
@@ -93,6 +98,10 @@ async def lifespan(app: FastAPI):
     
     yield
     
+    # Shutdown: Close Shared HTTP Client
+    await app.state.http_client.aclose()
+    logger.info("Shared HTTP Client closed.")
+
     # Shutdown: Stop Telegram Bot
     if bot_task and not bot_task.done():
         try:
@@ -180,7 +189,10 @@ async def create_issue(
 
         # Generate Action Plan (AI)
         ai_services = get_ai_services()
-        action_plan = await ai_services.action_plan_service.generate_action_plan(description, category, image_path)
+        action_plan_data = await ai_services.action_plan_service.generate_action_plan(description, category, image_path)
+
+        # Serialize action plan to JSON string for storage
+        action_plan_json = json.dumps(action_plan_data) if action_plan_data else None
 
         # Save to DB
         new_issue = Issue(
@@ -192,7 +204,7 @@ async def create_issue(
             latitude=latitude,
             longitude=longitude,
             location=location,
-            action_plan=action_plan
+            action_plan=action_plan_json
         )
 
         # Offload blocking DB operations to threadpool
@@ -204,7 +216,7 @@ async def create_issue(
         return {
             "id": new_issue.id,
             "message": "Issue reported successfully",
-            "action_plan": action_plan
+            "action_plan": action_plan_data
         }
     except Exception as e:
         logger.error(f"Error creating issue: {e}", exc_info=True)
@@ -306,7 +318,7 @@ async def detect_pothole_endpoint(image: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/api/detect-infrastructure")
-async def detect_infrastructure_endpoint(image: UploadFile = File(...)):
+async def detect_infrastructure_endpoint(request: Request, image: UploadFile = File(...)):
     # Convert to PIL Image directly from file object to save memory
     try:
         pil_image = await run_in_threadpool(Image.open, image.file)
@@ -316,14 +328,16 @@ async def detect_infrastructure_endpoint(image: UploadFile = File(...)):
 
     # Run detection (async now, so no threadpool needed for the detection call itself)
     try:
-        detections = await detect_infrastructure_clip(pil_image)
+        # Use shared HTTP client from app state
+        client = request.app.state.http_client
+        detections = await detect_infrastructure_clip(pil_image, client=client)
         return {"detections": detections}
     except Exception as e:
         logger.error(f"Infrastructure detection error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/api/detect-flooding")
-async def detect_flooding_endpoint(image: UploadFile = File(...)):
+async def detect_flooding_endpoint(request: Request, image: UploadFile = File(...)):
     # Convert to PIL Image directly from file object to save memory
     try:
         pil_image = await run_in_threadpool(Image.open, image.file)
@@ -333,14 +347,16 @@ async def detect_flooding_endpoint(image: UploadFile = File(...)):
 
     # Run detection (async)
     try:
-        detections = await detect_flooding_clip(pil_image)
+        # Use shared HTTP client from app state
+        client = request.app.state.http_client
+        detections = await detect_flooding_clip(pil_image, client=client)
         return {"detections": detections}
     except Exception as e:
         logger.error(f"Flooding detection error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/api/detect-vandalism")
-async def detect_vandalism_endpoint(image: UploadFile = File(...)):
+async def detect_vandalism_endpoint(request: Request, image: UploadFile = File(...)):
     # Convert to PIL Image directly from file object to save memory
     try:
         pil_image = await run_in_threadpool(Image.open, image.file)
@@ -350,7 +366,9 @@ async def detect_vandalism_endpoint(image: UploadFile = File(...)):
 
     # Run detection (async)
     try:
-        detections = await detect_vandalism_clip(pil_image)
+        # Use shared HTTP client from app state
+        client = request.app.state.http_client
+        detections = await detect_vandalism_clip(pil_image, client=client)
         return {"detections": detections}
     except Exception as e:
         logger.error(f"Vandalism detection error: {e}", exc_info=True)
