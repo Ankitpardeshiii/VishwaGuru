@@ -1,5 +1,5 @@
 import React, { useState, useEffect, Suspense } from 'react';
-import { getMaharashtraRepContacts } from './api/location';
+import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
 import ChatWidget from './components/ChatWidget';
 
 // Lazy Load Views
@@ -8,6 +8,7 @@ const MapView = React.lazy(() => import('./views/MapView'));
 const ReportForm = React.lazy(() => import('./views/ReportForm'));
 const ActionView = React.lazy(() => import('./views/ActionView'));
 const MaharashtraRepView = React.lazy(() => import('./views/MaharashtraRepView'));
+const NotFound = React.lazy(() => import('./views/NotFound'));
 
 // Lazy Load Detectors
 const PotholeDetector = React.lazy(() => import('./PotholeDetector'));
@@ -15,18 +16,32 @@ const GarbageDetector = React.lazy(() => import('./GarbageDetector'));
 const VandalismDetector = React.lazy(() => import('./VandalismDetector'));
 const FloodDetector = React.lazy(() => import('./FloodDetector'));
 const InfrastructureDetector = React.lazy(() => import('./InfrastructureDetector'));
+const IllegalParkingDetector = React.lazy(() => import('./IllegalParkingDetector'));
+const StreetLightDetector = React.lazy(() => import('./StreetLightDetector'));
+const FireDetector = React.lazy(() => import('./FireDetector'));
+const StrayAnimalDetector = React.lazy(() => import('./StrayAnimalDetector'));
+const BlockedRoadDetector = React.lazy(() => import('./BlockedRoadDetector'));
 
 // Get API URL from environment variable, fallback to relative URL for local dev
 const API_URL = import.meta.env.VITE_API_URL || '';
 
-function App() {
-  const [view, setView] = useState('home'); // home, map, report, action, mh-rep, pothole, garbage
+// Create a wrapper component to handle state management
+function AppContent() {
+  const navigate = useNavigate();
   const [responsibilityMap, setResponsibilityMap] = useState(null);
   const [actionPlan, setActionPlan] = useState(null);
   const [maharashtraRepInfo, setMaharashtraRepInfo] = useState(null);
   const [recentIssues, setRecentIssues] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // Safe navigation helper
+  const navigateToView = (view) => {
+    const validViews = ['home', 'map', 'report', 'action', 'mh-rep', 'pothole', 'garbage', 'vandalism', 'flood', 'infrastructure', 'parking', 'streetlight', 'fire', 'animal', 'blocked'];
+    if (validViews.includes(view)) {
+      navigate(view === 'home' ? '/' : `/${view}`);
+    }
+  };
 
   // Fetch recent issues on mount
   const fetchRecentIssues = async () => {
@@ -70,7 +85,7 @@ function App() {
       if (!response.ok) throw new Error('Failed to fetch data');
       const data = await response.json();
       setResponsibilityMap(data);
-      setView('map');
+      navigate('/map');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -91,7 +106,7 @@ function App() {
           </p>
         </header>
 
-        {loading && !['report', 'mh-rep'].includes(view) && (
+        {loading && (
           <div className="flex justify-center my-8">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
           </div>
@@ -108,70 +123,108 @@ function App() {
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500"></div>
           </div>
         }>
-          {view === 'home' && (
-            <Home
-              setView={setView}
-              fetchResponsibilityMap={fetchResponsibilityMap}
-              recentIssues={recentIssues}
-              handleUpvote={handleUpvote}
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <Home
+                  setView={navigateToView}
+                  fetchResponsibilityMap={fetchResponsibilityMap}
+                  recentIssues={recentIssues}
+                  handleUpvote={handleUpvote}
+                />
+              }
             />
-          )}
-          {view === 'map' && (
-            <MapView
-              responsibilityMap={responsibilityMap}
-              setView={setView}
+            <Route
+              path="/map"
+              element={
+                <MapView
+                  responsibilityMap={responsibilityMap}
+                  setView={navigateToView}
+                />
+              }
             />
-          )}
-          {view === 'report' && (
-            <ReportForm
-              setView={setView}
-              setLoading={setLoading}
-              setError={setError}
-              setActionPlan={setActionPlan}
-              loading={loading}
+            <Route
+              path="/report"
+              element={
+                <ReportForm
+                  setView={navigateToView}
+                  setLoading={setLoading}
+                  setError={setError}
+                  setActionPlan={setActionPlan}
+                  loading={loading}
+                />
+              }
             />
-          )}
-          {view === 'action' && (
-            <ActionView
-              actionPlan={actionPlan}
-              setView={setView}
+            <Route
+              path="/action"
+              element={
+                <ActionView
+                  actionPlan={actionPlan}
+                  setView={navigateToView}
+                />
+              }
             />
-          )}
-          {view === 'mh-rep' && (
-            <MaharashtraRepView
-              setView={setView}
-              setLoading={setLoading}
-              setError={setError}
-              setMaharashtraRepInfo={setMaharashtraRepInfo}
-              maharashtraRepInfo={maharashtraRepInfo}
-              loading={loading}
+            <Route
+              path="/mh-rep"
+              element={
+                <MaharashtraRepView
+                  setView={navigateToView}
+                  setLoading={setLoading}
+                  setError={setError}
+                  setMaharashtraRepInfo={setMaharashtraRepInfo}
+                  maharashtraRepInfo={maharashtraRepInfo}
+                  loading={loading}
+                />
+              }
             />
-          )}
-          {view === 'pothole' && <PotholeDetector onBack={() => setView('home')} />}
-          {view === 'garbage' && <GarbageDetector onBack={() => setView('home')} />}
-          {view === 'vandalism' && (
-            <div className="flex flex-col h-full">
-              <button onClick={() => setView('home')} className="self-start text-blue-600 mb-2">
-                 &larr; Back
-              </button>
-              <VandalismDetector />
-            </div>
-          )}
-          {view === 'flood' && (
-            <div className="flex flex-col h-full">
-               <button onClick={() => setView('home')} className="self-start text-blue-600 mb-2">
-                 &larr; Back
-              </button>
-              <FloodDetector />
-            </div>
-          )}
-          {view === 'infrastructure' && (
-             <InfrastructureDetector onBack={() => setView('home')} />
-          )}
+            <Route path="/pothole" element={<PotholeDetector onBack={() => navigate('/')} />} />
+            <Route path="/garbage" element={<GarbageDetector onBack={() => navigate('/')} />} />
+            <Route
+              path="/vandalism"
+              element={
+                <div className="flex flex-col h-full">
+                  <button onClick={() => navigate('/')} className="self-start text-blue-600 mb-2">
+                    &larr; Back
+                  </button>
+                  <VandalismDetector />
+                </div>
+              }
+            />
+            <Route
+              path="/flood"
+              element={
+                <div className="flex flex-col h-full">
+                  <button onClick={() => navigate('/')} className="self-start text-blue-600 mb-2">
+                    &larr; Back
+                  </button>
+                  <FloodDetector />
+                </div>
+              }
+            />
+            <Route
+              path="/infrastructure"
+              element={<InfrastructureDetector onBack={() => navigate('/')} />}
+            />
+            <Route path="/parking" element={<IllegalParkingDetector onBack={() => navigate('/')} />} />
+            <Route path="/streetlight" element={<StreetLightDetector onBack={() => navigate('/')} />} />
+            <Route path="/fire" element={<FireDetector onBack={() => navigate('/')} />} />
+            <Route path="/animal" element={<StrayAnimalDetector onBack={() => navigate('/')} />} />
+            <Route path="/blocked" element={<BlockedRoadDetector onBack={() => navigate('/')} />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
         </Suspense>
 
       </div>
     </div>
+  );
+}
+
+function App() {
+  return (
+    <Router>
+      <AppContent />
+    </Router>
   );
 }
 

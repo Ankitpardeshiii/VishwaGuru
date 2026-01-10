@@ -1,11 +1,12 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from database import engine, get_db
 from models import Base, Issue
-from ai_service import generate_action_plan, chat_with_civic_assistant
+from ai_interfaces import get_ai_services, initialize_ai_services
+from ai_factory import create_all_ai_services
 from maharashtra_locator import (
     find_constituency_by_pincode,
     find_mla_by_constituency,
@@ -13,7 +14,6 @@ from maharashtra_locator import (
     load_maharashtra_mla_data
 )
 from pydantic import BaseModel
-from gemini_summary import generate_mla_summary
 import json
 import os
 import shutil
@@ -26,10 +26,21 @@ from bot import run_bot
 from pothole_detection import detect_potholes
 from garbage_detection import detect_garbage
 from unified_detection_service import detect_vandalism, detect_flooding, detect_infrastructure, get_detection_status
+from hf_service import (
+    detect_vandalism_clip,
+    detect_flooding_clip,
+    detect_infrastructure_clip,
+    detect_illegal_parking_clip,
+    detect_street_light_clip,
+    detect_fire_clip,
+    detect_stray_animal_clip,
+    detect_blocked_road_clip
+)
 from PIL import Image
 from init_db import migrate_db
 import logging
 import time
+import httpx
 
 # Configure structured logging
 logging.basicConfig(
@@ -39,6 +50,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Simple in-memory cache
+# NOTE: This cache is process-local. In a multi-worker environment (e.g., Gunicorn with multiple workers),
+# this cache will not be shared across workers. For production scaling, consider using an external cache
+# like Redis (e.g., redis-py) to share state across processes.
 RECENT_ISSUES_CACHE = {
     "data": None,
     "timestamp": 0,
@@ -52,6 +66,24 @@ Base.metadata.create_all(bind=engine)
 async def lifespan(app: FastAPI):
     # Startup: Migrate DB
     migrate_db()
+
+    # Startup: Initialize Shared HTTP Client for external APIs (Connection Pooling)
+    app.state.http_client = httpx.AsyncClient()
+    logger.info("Shared HTTP Client initialized.")
+
+    # Startup: Initialize AI services
+    try:
+        action_plan_service, chat_service, mla_summary_service = create_all_ai_services()
+
+        initialize_ai_services(
+            action_plan_service=action_plan_service,
+            chat_service=chat_service,
+            mla_summary_service=mla_summary_service
+        )
+        logger.info("AI services initialized successfully.")
+    except Exception as e:
+        logger.error(f"Error initializing AI services: {e}", exc_info=True)
+        raise
 
     # Startup: Load static data to avoid first-request latency
     try:
@@ -79,6 +111,10 @@ async def lifespan(app: FastAPI):
     
     yield
     
+    # Shutdown: Close Shared HTTP Client
+    await app.state.http_client.aclose()
+    logger.info("Shared HTTP Client closed.")
+
     # Shutdown: Stop Telegram Bot
     if bot_task and not bot_task.done():
         try:
@@ -157,6 +193,9 @@ async def create_issue(
     description: str = Form(...),
     category: str = Form(...),
     user_email: str = Form(None),
+    latitude: float = Form(None),
+    longitude: float = Form(None),
+    location: str = Form(None),
     image: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
@@ -173,25 +212,36 @@ async def create_issue(
             # Offload blocking file I/O to threadpool
             await run_in_threadpool(save_file_blocking, image.file, image_path)
 
+        # Generate Action Plan (AI)
+        ai_services = get_ai_services()
+        action_plan_data = await ai_services.action_plan_service.generate_action_plan(description, category, image_path)
+
+        # Serialize action plan to JSON string for storage
+        action_plan_json = json.dumps(action_plan_data) if action_plan_data else None
+
         # Save to DB
         new_issue = Issue(
             description=description,
             category=category,
             image_path=image_path,
             source="web",
-            user_email=user_email
+            user_email=user_email,
+            latitude=latitude,
+            longitude=longitude,
+            location=location,
+            action_plan=action_plan_json
         )
 
         # Offload blocking DB operations to threadpool
         await run_in_threadpool(save_issue_db, db, new_issue)
 
-        # Generate Action Plan (AI)
-        action_plan = await generate_action_plan(description, category, image_path)
+        # Invalidate cache
+        RECENT_ISSUES_CACHE["data"] = None
 
         return {
             "id": new_issue.id,
             "message": "Issue reported successfully",
-            "action_plan": action_plan
+            "action_plan": action_plan_data
         }
     except Exception as e:
         logger.error(f"Error creating issue: {e}", exc_info=True)
@@ -240,7 +290,8 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
-    response = await chat_with_civic_assistant(request.query)
+    ai_services = get_ai_services()
+    response = await ai_services.chat_service.chat(request.query)
     return {"response": response}
 
 @app.get("/api/issues/recent")
@@ -260,7 +311,11 @@ def get_recent_issues(db: Session = Depends(get_db)):
             "created_at": i.created_at,
             "image_path": i.image_path,
             "status": i.status,
-            "upvotes": i.upvotes if i.upvotes is not None else 0
+            "upvotes": i.upvotes if i.upvotes is not None else 0,
+            "location": i.location,
+            "latitude": i.latitude,
+            "longitude": i.longitude,
+            "action_plan": i.action_plan
         }
         for i in issues
     ]
@@ -288,7 +343,7 @@ async def detect_pothole_endpoint(image: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/api/detect-infrastructure")
-async def detect_infrastructure_endpoint(image: UploadFile = File(...)):
+async def detect_infrastructure_endpoint(request: Request, image: UploadFile = File(...)):
     # Convert to PIL Image directly from file object to save memory
     try:
         pil_image = await run_in_threadpool(Image.open, image.file)
@@ -299,13 +354,16 @@ async def detect_infrastructure_endpoint(image: UploadFile = File(...)):
     # Run detection using unified service (local ML by default)
     try:
         detections = await detect_infrastructure(pil_image)
+        # Use shared HTTP client from app state
+        client = request.app.state.http_client
+        detections = await detect_infrastructure_clip(pil_image, client=client)
         return {"detections": detections}
     except Exception as e:
         logger.error(f"Infrastructure detection error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/api/detect-flooding")
-async def detect_flooding_endpoint(image: UploadFile = File(...)):
+async def detect_flooding_endpoint(request: Request, image: UploadFile = File(...)):
     # Convert to PIL Image directly from file object to save memory
     try:
         pil_image = await run_in_threadpool(Image.open, image.file)
@@ -316,13 +374,16 @@ async def detect_flooding_endpoint(image: UploadFile = File(...)):
     # Run detection using unified service (local ML by default)
     try:
         detections = await detect_flooding(pil_image)
+        # Use shared HTTP client from app state
+        client = request.app.state.http_client
+        detections = await detect_flooding_clip(pil_image, client=client)
         return {"detections": detections}
     except Exception as e:
         logger.error(f"Flooding detection error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/api/detect-vandalism")
-async def detect_vandalism_endpoint(image: UploadFile = File(...)):
+async def detect_vandalism_endpoint(request: Request, image: UploadFile = File(...)):
     # Convert to PIL Image directly from file object to save memory
     try:
         pil_image = await run_in_threadpool(Image.open, image.file)
@@ -333,6 +394,9 @@ async def detect_vandalism_endpoint(image: UploadFile = File(...)):
     # Run detection using unified service (local ML by default)
     try:
         detections = await detect_vandalism(pil_image)
+        # Use shared HTTP client from app state
+        client = request.app.state.http_client
+        detections = await detect_vandalism_clip(pil_image, client=client)
         return {"detections": detections}
     except Exception as e:
         logger.error(f"Vandalism detection error: {e}", exc_info=True)
@@ -354,6 +418,87 @@ async def detect_garbage_endpoint(image: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Garbage detection error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/api/detect-illegal-parking")
+async def detect_illegal_parking_endpoint(request: Request, image: UploadFile = File(...)):
+    try:
+        pil_image = await run_in_threadpool(Image.open, image.file)
+    except Exception as e:
+        logger.error(f"Invalid image file: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    try:
+        client = request.app.state.http_client
+        detections = await detect_illegal_parking_clip(pil_image, client=client)
+        return {"detections": detections}
+    except Exception as e:
+        logger.error(f"Illegal parking detection error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/api/detect-street-light")
+async def detect_street_light_endpoint(request: Request, image: UploadFile = File(...)):
+    try:
+        pil_image = await run_in_threadpool(Image.open, image.file)
+    except Exception as e:
+        logger.error(f"Invalid image file: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    try:
+        client = request.app.state.http_client
+        detections = await detect_street_light_clip(pil_image, client=client)
+        return {"detections": detections}
+    except Exception as e:
+        logger.error(f"Street light detection error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/api/detect-fire")
+async def detect_fire_endpoint(request: Request, image: UploadFile = File(...)):
+    try:
+        pil_image = await run_in_threadpool(Image.open, image.file)
+    except Exception as e:
+        logger.error(f"Invalid image file: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    try:
+        client = request.app.state.http_client
+        detections = await detect_fire_clip(pil_image, client=client)
+        return {"detections": detections}
+    except Exception as e:
+        logger.error(f"Fire detection error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/api/detect-stray-animal")
+async def detect_stray_animal_endpoint(request: Request, image: UploadFile = File(...)):
+    try:
+        pil_image = await run_in_threadpool(Image.open, image.file)
+    except Exception as e:
+        logger.error(f"Invalid image file: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    try:
+        client = request.app.state.http_client
+        detections = await detect_stray_animal_clip(pil_image, client=client)
+        return {"detections": detections}
+    except Exception as e:
+        logger.error(f"Stray animal detection error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/api/detect-blocked-road")
+async def detect_blocked_road_endpoint(request: Request, image: UploadFile = File(...)):
+    try:
+        pil_image = await run_in_threadpool(Image.open, image.file)
+    except Exception as e:
+        logger.error(f"Invalid image file: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    try:
+        client = request.app.state.http_client
+        detections = await detect_blocked_road_clip(pil_image, client=client)
+        return {"detections": detections}
+    except Exception as e:
+        logger.error(f"Blocked road detection error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 
 @app.get("/api/mh/rep-contacts")
 async def get_maharashtra_rep_contacts(pincode: str = Query(..., min_length=6, max_length=6)):
@@ -408,7 +553,8 @@ async def get_maharashtra_rep_contacts(pincode: str = Query(..., min_length=6, m
     try:
         # Only generate summary if we have a valid constituency and MLA
         if assembly_constituency and mla_info["mla_name"] != "MLA Info Unavailable":
-            description = await generate_mla_summary(
+            ai_services = get_ai_services()
+            description = await ai_services.mla_summary_service.generate_mla_summary(
                 district=constituency_info["district"],
                 assembly_constituency=assembly_constituency,
                 mla_name=mla_info["mla_name"]
