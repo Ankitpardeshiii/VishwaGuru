@@ -27,6 +27,18 @@ from bot import run_bot
 from pothole_detection import detect_potholes
 from garbage_detection import detect_garbage
 from local_ml_service import detect_vandalism_local, detect_flooding_local, detect_infrastructure_local
+from hf_service import (
+    detect_illegal_parking_clip,
+    detect_street_light_clip,
+    detect_fire_clip,
+    detect_stray_animal_clip,
+    detect_blocked_road_clip,
+    detect_tree_hazard_clip,
+    detect_pest_clip,
+    detect_severity_clip,
+    generate_image_caption,
+    detect_smart_scan_clip
+)
 from PIL import Image
 from init_db import migrate_db
 import logging
@@ -562,6 +574,23 @@ async def detect_severity_endpoint(request: Request, image: UploadFile = File(..
         return result
     except Exception as e:
         logger.error(f"Severity detection error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/detect-smart-scan")
+async def detect_smart_scan_endpoint(request: Request, image: UploadFile = File(...)):
+    try:
+        image_bytes = await image.read()
+    except Exception as e:
+        logger.error(f"Invalid image file: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    try:
+        client = request.app.state.http_client
+        result = await detect_smart_scan_clip(image_bytes, client=client)
+        return result
+    except Exception as e:
+        logger.error(f"Smart scan detection error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
