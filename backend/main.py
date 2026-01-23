@@ -21,6 +21,7 @@ import time
 import magic
 import httpx
 
+from backend.cache import recent_issues_cache
 from backend.database import engine, Base, SessionLocal, get_db
 from backend.models import Issue
 from backend.schemas import IssueResponse, ChatRequest
@@ -116,13 +117,6 @@ def validate_uploaded_file(file: UploadFile) -> None:
             detail="Unable to validate file content. Please ensure it's a valid image file."
         )
 
-# Simple in-memory cache
-RECENT_ISSUES_CACHE = {
-    "data": None,
-    "timestamp": 0,
-    "ttl": 60  # seconds
-}
-
 # Create tables if they don't exist
 Base.metadata.create_all(bind=engine)
 
@@ -135,8 +129,11 @@ async def process_action_plan_background(issue_id: int, description: str, catego
         # Update issue in DB
         issue = db.query(Issue).filter(Issue.id == issue_id).first()
         if issue:
-            issue.action_plan = json.dumps(action_plan)
+            issue.action_plan = action_plan
             db.commit()
+
+            # Invalidate cache to ensure users get the updated action plan
+            recent_issues_cache.invalidate()
     except Exception as e:
         logger.error(f"Background action plan generation failed for issue {issue_id}: {e}", exc_info=True)
     finally:
@@ -361,6 +358,38 @@ async def create_issue(
     # Add background task for AI generation
     background_tasks.add_task(process_action_plan_background, new_issue.id, description, category, image_path)
 
+    # Optimistic Cache Update
+    try:
+        current_cache = recent_issues_cache.get()
+        if current_cache:
+            # Create a dict representation of the new issue (similar to IssueResponse)
+            # We use the new_issue object which has been refreshed from DB
+            new_issue_dict = IssueResponse(
+                id=new_issue.id,
+                category=new_issue.category,
+                description=new_issue.description[:100] + "..." if len(new_issue.description) > 100 else new_issue.description,
+                created_at=new_issue.created_at,
+                image_path=new_issue.image_path,
+                status=new_issue.status,
+                upvotes=new_issue.upvotes if new_issue.upvotes is not None else 0,
+                location=new_issue.location,
+                latitude=new_issue.latitude,
+                longitude=new_issue.longitude,
+                action_plan=new_issue.action_plan
+            ).model_dump(mode='json')
+
+            # Prepend new issue to the list
+            current_cache.insert(0, new_issue_dict)
+
+            # Keep only last 10 (or matching the limit in get_recent_issues)
+            if len(current_cache) > 10:
+                current_cache.pop()
+
+            recent_issues_cache.set(current_cache)
+    except Exception as e:
+        logger.error(f"Error updating cache optimistically: {e}")
+        # Failure to update cache is not critical, don't fail the request
+
     return {
         "id": new_issue.id,
         "message": "Issue reported successfully. Action plan generating in background.",
@@ -446,14 +475,6 @@ def get_recent_issues(db: Session = Depends(get_db)):
     # Convert to Pydantic models for validation and serialization
     data = []
     for i in issues:
-        # Handle action_plan JSON string
-        action_plan_val = i.action_plan
-        if isinstance(action_plan_val, str) and action_plan_val:
-            try:
-                action_plan_val = json.loads(action_plan_val)
-            except json.JSONDecodeError:
-                pass # Keep as string if not valid JSON
-
         data.append(IssueResponse(
             id=i.id,
             category=i.category,
@@ -465,7 +486,7 @@ def get_recent_issues(db: Session = Depends(get_db)):
             location=i.location,
             latitude=i.latitude,
             longitude=i.longitude,
-            action_plan=action_plan_val
+            action_plan=i.action_plan
         ).model_dump(mode='json')) # Store as JSON-compatible dict in cache
 
     recent_issues_cache.set(data)
