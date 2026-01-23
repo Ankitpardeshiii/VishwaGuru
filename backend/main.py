@@ -24,8 +24,14 @@ import httpx
 from backend.cache import recent_issues_cache
 from backend.database import engine, Base, SessionLocal, get_db
 from backend.models import Issue
-from backend.schemas import IssueResponse, ChatRequest
-from backend.bot import run_bot, start_bot_thread, stop_bot_thread
+from backend.schemas import (
+    IssueResponse, IssueCreateRequest, IssueCreateResponse, ChatRequest, ChatResponse,
+    VoteRequest, VoteResponse, DetectionResponse, UrgencyAnalysisRequest,
+    UrgencyAnalysisResponse, HealthResponse, MLStatusResponse, ResponsibilityMapResponse,
+    ErrorResponse, SuccessResponse, IssueCategory, IssueStatus
+)
+from backend.exceptions import EXCEPTION_HANDLERS
+from backend.bot import run_bot
 from backend.ai_factory import create_all_ai_services
 from backend.ai_service import generate_action_plan, chat_with_civic_assistant
 from backend.maharashtra_locator import (
@@ -197,7 +203,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error stopping bot thread: {e}")
 
-app = FastAPI(title="VishwaGuru Backend", lifespan=lifespan)
+app = FastAPI(
+    title="VishwaGuru Backend",
+    description="AI-powered civic issue reporting and resolution platform",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Add centralized exception handlers
+for exception_type, handler in EXCEPTION_HANDLERS.items():
+    app.add_exception_handler(exception_type, handler)
 
 # CORS Configuration - Security Enhanced
 # For separate frontend/backend deployment (e.g., Netlify + Render)
@@ -245,29 +260,39 @@ app.add_middleware(
 # Enable Gzip compression
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
-@app.get("/")
+@app.get("/", response_model=SuccessResponse)
 def root():
-    return {
-        "status": "ok",
-        "service": "VishwaGuru API",
-        "version": "1.0.0"
-    }
+    return SuccessResponse(
+        message="VishwaGuru API is running",
+        data={
+            "service": "VishwaGuru API",
+            "version": "1.0.0"
+        }
+    )
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health():
-    return {"status": "healthy"}
+    return HealthResponse(
+        status="healthy",
+        version="1.0.0",
+        services={
+            "database": "connected",
+            "ai_services": "initialized"
+        }
+    )
 
-@app.get("/api/ml-status")
+@app.get("/api/ml-status", response_model=MLStatusResponse)
 async def ml_status():
     """
     Get the status of the ML detection service.
     Returns information about which backend is being used (local or HF API).
     """
     status = await get_detection_status()
-    return {
-        "status": "ok",
-        "ml_service": status
-    }
+    return MLStatusResponse(
+        status="ok",
+        models_loaded=status.get("models_loaded", []),
+        memory_usage=status.get("memory_usage")
+    )
 
 def save_file_blocking(file_obj, path):
     with open(path, "wb") as buffer:
@@ -279,15 +304,15 @@ def save_issue_db(db: Session, issue: Issue):
     db.refresh(issue)
     return issue
 
-@app.post("/api/issues")
+@app.post("/api/issues", response_model=IssueCreateResponse, status_code=201)
 async def create_issue(
     background_tasks: BackgroundTasks,
-    description: str = Form(...),
-    category: str = Form(...),
+    description: str = Form(..., min_length=10, max_length=1000),
+    category: str = Form(..., pattern=f"^({'|'.join([cat.value for cat in IssueCategory])})$"),
     user_email: str = Form(None),
-    latitude: float = Form(None),
-    longitude: float = Form(None),
-    location: str = Form(None),
+    latitude: float = Form(None, ge=-90, le=90),
+    longitude: float = Form(None, ge=-180, le=180),
+    location: str = Form(None, max_length=200),
     image: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
@@ -377,13 +402,13 @@ async def create_issue(
         logger.error(f"Error updating cache optimistically: {e}")
         # Failure to update cache is not critical, don't fail the request
 
-    return {
-        "id": new_issue.id,
-        "message": "Issue reported successfully. Action plan generating in background.",
-        "action_plan": None
-    }
+    return IssueCreateResponse(
+        id=new_issue.id,
+        message="Issue reported successfully. Action plan will be generated shortly.",
+        action_plan=None
+    )
 
-@app.post("/api/issues/{issue_id}/vote")
+@app.post("/api/issues/{issue_id}/vote", response_model=VoteResponse)
 def upvote_issue(issue_id: int, db: Session = Depends(get_db)):
     issue = db.query(Issue).filter(Issue.id == issue_id).first()
     if not issue:
@@ -397,7 +422,11 @@ def upvote_issue(issue_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(issue)
 
-    return {"id": issue.id, "upvotes": issue.upvotes, "message": "Upvoted successfully"}
+    return VoteResponse(
+        id=issue.id,
+        upvotes=issue.upvotes,
+        message="Issue upvoted successfully"
+    )
 
 @lru_cache(maxsize=1)
 def _load_responsibility_map():
@@ -408,37 +437,38 @@ def _load_responsibility_map():
     with open(file_path, "r") as f:
         return json.load(f)
 
-@app.get("/api/responsibility-map")
+@app.get("/api/responsibility-map", response_model=ResponsibilityMapResponse)
 def get_responsibility_map():
-    # In a real app, this might read from the file or database
-    # For MVP, we can return the structure directly or read the file
+    """Get responsibility mapping data for civic authorities"""
     try:
-        return _load_responsibility_map()
+        data = _load_responsibility_map()
+        return ResponsibilityMapResponse(data=data)
     except FileNotFoundError:
         logger.error("Responsibility map file not found", exc_info=True)
-        raise HTTPException(status_code=404, detail="Data file not found")
+        raise HTTPException(status_code=404, detail="Responsibility map data not found")
     except Exception as e:
         logger.error(f"Error loading responsibility map: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Failed to load responsibility map")
 
-class UrgencyRequest(BaseModel):
-    description: str
-
-@app.post("/api/analyze-urgency")
-async def analyze_urgency_endpoint(request: Request, urgency_req: UrgencyRequest):
+@app.post("/api/analyze-urgency", response_model=UrgencyAnalysisResponse)
+async def analyze_urgency_endpoint(request: Request, urgency_req: UrgencyAnalysisRequest):
     try:
         client = request.app.state.http_client
         result = await analyze_urgency_text(urgency_req.description, client=client)
-        return result
+        return UrgencyAnalysisResponse(
+            urgency_level=result.get("urgency_level", "medium"),
+            reasoning=result.get("reasoning", "Analysis completed"),
+            recommended_actions=result.get("recommended_actions", [])
+        )
     except Exception as e:
         logger.error(f"Urgency analysis error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Urgency service temporarily unavailable")
+        raise HTTPException(status_code=500, detail="Urgency analysis service temporarily unavailable")
 
-@app.post("/api/chat")
+@app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     try:
         response = await chat_with_civic_assistant(request.query)
-        return {"response": response}
+        return ChatResponse(response=response)
     except Exception as e:
         logger.error(f"Chat service error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Chat service temporarily unavailable")
@@ -480,11 +510,11 @@ def get_recent_issues(db: Session = Depends(get_db)):
 
     return data
 
-@app.post("/api/detect-pothole")
+@app.post("/api/detect-pothole", response_model=DetectionResponse)
 async def detect_pothole_endpoint(image: UploadFile = File(...)):
     # Validate uploaded file
-    await validate_uploaded_file(image)
-    
+    validate_uploaded_file(image)
+
     # Convert to PIL Image directly from file object to save memory
     try:
         pil_image = await run_in_threadpool(Image.open, image.file)
@@ -499,16 +529,16 @@ async def detect_pothole_endpoint(image: UploadFile = File(...)):
     # Run detection (blocking, so run in threadpool)
     try:
         detections = await run_in_threadpool(detect_potholes, pil_image)
-        return {"detections": detections}
+        return DetectionResponse(detections=detections)
     except Exception as e:
         logger.error(f"Pothole detection error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Detection service temporarily unavailable")
+        raise HTTPException(status_code=500, detail="Pothole detection service temporarily unavailable")
 
-@app.post("/api/detect-infrastructure")
+@app.post("/api/detect-infrastructure", response_model=DetectionResponse)
 async def detect_infrastructure_endpoint(request: Request, image: UploadFile = File(...)):
     # Validate uploaded file
-    await validate_uploaded_file(image)
-    
+    validate_uploaded_file(image)
+
     # Convert to PIL Image directly from file object to save memory
     try:
         pil_image = await run_in_threadpool(Image.open, image.file)
@@ -525,10 +555,10 @@ async def detect_infrastructure_endpoint(request: Request, image: UploadFile = F
         # Use shared HTTP client from app state
         client = request.app.state.http_client
         detections = await detect_infrastructure_local(pil_image, client=client)
-        return {"detections": detections}
+        return DetectionResponse(detections=detections)
     except Exception as e:
         logger.error(f"Infrastructure detection error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Detection service temporarily unavailable")
+        raise HTTPException(status_code=500, detail="Infrastructure detection service temporarily unavailable")
 
 @app.post("/api/detect-flooding")
 async def detect_flooding_endpoint(request: Request, image: UploadFile = File(...)):
@@ -546,15 +576,31 @@ async def detect_flooding_endpoint(request: Request, image: UploadFile = File(..
         logger.error(f"Invalid image file for flooding detection: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail="Invalid image file")
 
+@app.post("/api/detect-flooding", response_model=DetectionResponse)
+async def detect_flooding_endpoint(request: Request, image: UploadFile = File(...)):
+    # Validate uploaded file
+    validate_uploaded_file(image)
+    
+    # Convert to PIL Image directly from file object to save memory
+    try:
+        pil_image = await run_in_threadpool(Image.open, image.file)
+        # Validate image for processing
+        validate_image_for_processing(pil_image)
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions from validation
+    except Exception as e:
+        logger.error(f"Invalid image file for flooding detection: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
     # Run detection using unified service (local ML by default)
     try:
         # Use shared HTTP client from app state
         client = request.app.state.http_client
         detections = await detect_flooding_local(pil_image, client=client)
-        return {"detections": detections}
+        return DetectionResponse(detections=detections)
     except Exception as e:
         logger.error(f"Flooding detection error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Detection service temporarily unavailable")
+        raise HTTPException(status_code=500, detail="Flooding detection service temporarily unavailable")
 
 @app.post("/api/detect-vandalism")
 async def detect_vandalism_endpoint(request: Request, image: UploadFile = File(...)):
