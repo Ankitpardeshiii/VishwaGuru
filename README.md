@@ -249,3 +249,4 @@ npm run dev
 ## License
 
 This project is licensed under the **AGPL-3.0** License.
+<img width="597" height="642" alt="image" src="https://github.com/user-attachments/assets/556f813c-42b8-4964-b83e-6de502d088be" />
