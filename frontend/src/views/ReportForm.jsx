@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { fakeActionPlan } from '../fakeData';
 import { Camera, Image as ImageIcon, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
+import { saveReportOffline, registerBackgroundSync } from '../offlineQueue';
 
 // Get API URL from environment variable, fallback to relative URL for local dev
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -22,6 +23,21 @@ const ReportForm = ({ setView, setLoading, setError, setActionPlan, loading }) =
   const [describing, setDescribing] = useState(false);
   const [urgencyAnalysis, setUrgencyAnalysis] = useState(null);
   const [analyzingUrgency, setAnalyzingUrgency] = useState(false);
+  const [submitStatus, setSubmitStatus] = useState({ state: 'idle', message: '' });
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const analyzeUrgency = async () => {
       if (!formData.description || formData.description.length < 5) return;
@@ -132,6 +148,35 @@ const ReportForm = ({ setView, setLoading, setError, setActionPlan, loading }) =
     setLoading(true);
     setError(null);
     setSubmitStatus({ state: 'pending', message: 'Submitting your issue…' });
+
+    const isOnline = navigator.onLine;
+
+    if (!isOnline) {
+      // Save offline
+      try {
+        const reportData = {
+          category: formData.category,
+          description: formData.description,
+          latitude: formData.latitude,
+          longitude: formData.longitude,
+          location: formData.location,
+          imageBlob: formData.image,
+          severity_level: severity?.level,
+          severity_score: severity?.confidence
+        };
+        await saveReportOffline(reportData);
+        registerBackgroundSync();
+        setSubmitStatus({ state: 'success', message: 'Report saved offline. Will sync when online.' });
+        setActionPlan(fakeActionPlan); // Show fallback plan
+        setView('action');
+      } catch (err) {
+        setSubmitStatus({ state: 'error', message: 'Failed to save offline.' });
+        setError('Failed to save report offline.');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
 
     const payload = new FormData();
     payload.append('description', formData.description);
@@ -323,8 +368,12 @@ const ReportForm = ({ setView, setLoading, setError, setActionPlan, loading }) =
             disabled={loading}
             className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 font-bold shadow-md"
           >
-            {loading ? 'Processing…' : 'Generate Action Plan'}
+            {loading ? 'Processing…' : isOnline ? 'Generate Action Plan' : 'Save Offline'}
           </button>
+
+          <div className={`mt-2 text-center text-sm ${isOnline ? 'text-green-600' : 'text-orange-600'}`}>
+            {isOnline ? '🟢 Online - Report will be submitted immediately' : '🟠 Offline - Report will be saved and synced later'}
+          </div>
 
           {submitStatus.state !== 'idle' && (
             <div
