@@ -10,6 +10,7 @@ const MapView = React.lazy(() => import('./views/MapView'));
 const ReportForm = React.lazy(() => import('./views/ReportForm'));
 const ActionView = React.lazy(() => import('./views/ActionView'));
 const MaharashtraRepView = React.lazy(() => import('./views/MaharashtraRepView'));
+const VerifyView = React.lazy(() => import('./views/VerifyView'));
 const NotFound = React.lazy(() => import('./views/NotFound'));
 
 // Lazy Load Detectors
@@ -213,6 +214,7 @@ function AppContent() {
             <Route path="/tree" element={<TreeDetector onBack={() => navigate('/')} />} />
             <Route path="/pest" element={<PestDetector onBack={() => navigate('/')} />} />
             <Route path="/smart-scan" element={<SmartScanner onBack={() => navigate('/')} />} />
+            <Route path="/verify/:id" element={<VerifyView />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>

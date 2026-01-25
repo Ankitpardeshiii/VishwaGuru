@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from PIL import Image
 
 import json
@@ -64,7 +64,8 @@ from backend.hf_api_service import (
     detect_severity_clip,
     detect_smart_scan_clip,
     generate_image_caption,
-    analyze_urgency_text
+    analyze_urgency_text,
+    verify_resolution_vqa
 )
 
 # Configure structured logging
@@ -952,6 +953,70 @@ async def detect_smart_scan_endpoint(request: Request, image: UploadFile = File(
     except Exception as e:
         logger.error(f"Smart scan detection error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/issues/{issue_id}/verify")
+async def verify_issue_resolution(
+    issue_id: int,
+    request: Request,
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    issue = db.query(Issue).filter(Issue.id == issue_id).first()
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    # Validate uploaded file
+    await validate_uploaded_file(image)
+
+    try:
+        image_bytes = await image.read()
+    except Exception as e:
+        logger.error(f"Invalid image file: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    # Construct question
+    category = issue.category.lower() if issue.category else "issue"
+    question = f"Is there a {category} in this image?"
+
+    # Custom questions for common categories
+    if "pothole" in category:
+        question = "Is there a pothole on the road?"
+    elif "garbage" in category or "waste" in category:
+        question = "Is there garbage or trash on the ground?"
+    elif "light" in category:
+        question = "Is the streetlight broken?"
+    elif "water" in category or "flood" in category:
+        question = "Is the street flooded?"
+    elif "tree" in category:
+        question = "Is there a fallen tree?"
+
+    try:
+        client = request.app.state.http_client
+        result = await verify_resolution_vqa(image_bytes, question, client)
+
+        answer = result.get('answer', 'unknown')
+        confidence = result.get('confidence', 0)
+
+        # If the answer is "no" (meaning the issue is NOT present), we consider it resolved.
+        is_resolved = False
+        if answer.lower() in ["no", "none", "nothing"] and confidence > 0.5:
+            is_resolved = True
+            # Update status if not already resolved
+            if issue.status != "resolved":
+                issue.status = "verified" # Mark as verified (resolved usually implies closed)
+                issue.verified_at = datetime.now(timezone.utc)
+                db.commit()
+
+        return {
+            "is_resolved": is_resolved,
+            "ai_answer": answer,
+            "confidence": confidence,
+            "question_asked": question
+        }
+    except Exception as e:
+        logger.error(f"Resolution verification error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Verification service temporarily unavailable")
 
 
 @app.post("/api/generate-description")

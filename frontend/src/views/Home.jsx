@@ -1,13 +1,15 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, MapPin, Search, Activity, Camera, Trash2, ThumbsUp, Brush,
   Droplets, Zap, Truck, Flame, Dog, XCircle, Lightbulb, TreeDeciduous, Bug,
-  Scan, ChevronRight, LayoutGrid, Shield, Leaf, Building
+  Scan, ChevronRight, LayoutGrid, Shield, Leaf, Building, CheckCircle
 } from 'lucide-react';
 
 const Home = ({ setView, fetchResponsibilityMap, recentIssues, handleUpvote }) => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const totalImpact = 1240 + (recentIssues ? recentIssues.length : 0);
 
   const categories = [
@@ -160,13 +162,23 @@ const Home = ({ setView, fetchResponsibilityMap, recentIssues, handleUpvote }) =
                        <MapPin size={12} />
                        {issue.location || 'Unknown Location'}
                    </div>
-                   <button
-                      onClick={(e) => { e.stopPropagation(); handleUpvote(issue.id); }}
-                      className="flex items-center gap-1.5 text-gray-500 hover:text-blue-600 text-xs bg-gray-50 px-2 py-1 rounded-md transition hover:bg-blue-50"
-                  >
-                      <ThumbsUp size={12} />
-                      <span className="font-medium">{issue.upvotes || 0}</span>
-                  </button>
+                   <div className="flex gap-2">
+                       <button
+                          onClick={(e) => { e.stopPropagation(); navigate(`/verify/${issue.id}`); }}
+                          className="flex items-center gap-1.5 text-gray-500 hover:text-green-600 text-xs bg-gray-50 px-2 py-1 rounded-md transition hover:bg-green-50"
+                          title="Verify Resolution"
+                      >
+                          <CheckCircle size={12} />
+                          <span className="font-medium">Verify</span>
+                      </button>
+                       <button
+                          onClick={(e) => { e.stopPropagation(); handleUpvote(issue.id); }}
+                          className="flex items-center gap-1.5 text-gray-500 hover:text-blue-600 text-xs bg-gray-50 px-2 py-1 rounded-md transition hover:bg-blue-50"
+                      >
+                          <ThumbsUp size={12} />
+                          <span className="font-medium">{issue.upvotes || 0}</span>
+                      </button>
+                   </div>
               </div>
             </div>
           ))
