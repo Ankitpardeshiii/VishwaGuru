@@ -18,6 +18,8 @@ import shutil
 import uuid
 import asyncio
 import logging
+import io
+import hashlib
 import time
 from pywebpush import webpush, WebPushException
 import magic
@@ -81,7 +83,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # File upload validation constants
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB (increased for better user experience)
 ALLOWED_MIME_TYPES = {
     'image/jpeg',
     'image/png',
@@ -94,6 +96,10 @@ ALLOWED_MIME_TYPES = {
 # User upload limits
 UPLOAD_LIMIT_PER_USER = 5  # max uploads per user per hour
 UPLOAD_LIMIT_PER_IP = 10  # max uploads per IP per hour
+
+# Image processing cache to avoid duplicate API calls
+image_processing_cache = {}
+CACHE_EXPIRY = 300  # 5 minutes
 
 def check_upload_limits(identifier: str, limit: int) -> None:
     """
@@ -156,6 +162,27 @@ def _validate_uploaded_file_sync(file: UploadFile) -> None:
             img = Image.open(file.file)
             img.verify()  # Verify the image is not corrupted
             file.file.seek(0)  # Reset after PIL operations
+            
+            # Resize large images for better performance
+            img = Image.open(file.file)
+            if img.width > 1024 or img.height > 1024:
+                # Calculate new size maintaining aspect ratio
+                ratio = min(1024 / img.width, 1024 / img.height)
+                new_width = int(img.width * ratio)
+                new_height = int(img.height * ratio)
+                
+                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                
+                # Save resized image back to file
+                output = io.BytesIO()
+                img.save(output, format=img.format or 'JPEG', quality=85)
+                output.seek(0)
+                
+                # Replace file content
+                file.file = output
+                file.size = output.tell()
+                output.seek(0)
+                
         except Exception as pil_error:
             logger.error(f"PIL validation failed for {file.filename}: {pil_error}")
             raise HTTPException(
@@ -1154,6 +1181,27 @@ async def detect_pest_endpoint(request: Request, image: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+async def get_cached_or_compute(cache_key: str, compute_func, *args, **kwargs):
+    """Get cached result or compute and cache it."""
+    now = datetime.now(timezone.utc).timestamp()
+    
+    # Clean expired entries
+    expired_keys = [k for k, v in image_processing_cache.items() if now - v['timestamp'] > CACHE_EXPIRY]
+    for k in expired_keys:
+        del image_processing_cache[k]
+    
+    if cache_key in image_processing_cache:
+        return image_processing_cache[cache_key]['result']
+    
+    # Compute and cache
+    result = await compute_func(*args, **kwargs)
+    image_processing_cache[cache_key] = {
+        'result': result,
+        'timestamp': now
+    }
+    return result
+
+
 @app.post("/api/detect-severity")
 async def detect_severity_endpoint(request: Request, image: UploadFile = File(...)):
     try:
@@ -1163,8 +1211,13 @@ async def detect_severity_endpoint(request: Request, image: UploadFile = File(..
         raise HTTPException(status_code=400, detail="Invalid image file")
 
     try:
+        # Create cache key from image hash
+        import hashlib
+        image_hash = hashlib.md5(image_bytes).hexdigest()
+        cache_key = f"severity_{image_hash}"
+        
         client = request.app.state.http_client
-        result = await detect_severity_clip(image_bytes, client=client)
+        result = get_cached_or_compute(cache_key, detect_severity_clip, image_bytes, client)
         return result
     except Exception as e:
         logger.error(f"Severity detection error: {e}", exc_info=True)
@@ -1180,8 +1233,12 @@ async def detect_smart_scan_endpoint(request: Request, image: UploadFile = File(
         raise HTTPException(status_code=400, detail="Invalid image file")
 
     try:
+        # Create cache key from image hash
+        image_hash = hashlib.md5(image_bytes).hexdigest()
+        cache_key = f"smart_scan_{image_hash}"
+        
         client = request.app.state.http_client
-        result = await detect_smart_scan_clip(image_bytes, client=client)
+        result = await get_cached_or_compute(cache_key, detect_smart_scan_clip, image_bytes, client)
         return result
     except Exception as e:
         logger.error(f"Smart scan detection error: {e}", exc_info=True)
@@ -1261,8 +1318,12 @@ async def generate_description_endpoint(request: Request, image: UploadFile = Fi
         raise HTTPException(status_code=400, detail="Invalid image file")
 
     try:
+        # Create cache key from image hash
+        image_hash = hashlib.md5(image_bytes).hexdigest()
+        cache_key = f"description_{image_hash}"
+        
         client = request.app.state.http_client
-        description = await generate_image_caption(image_bytes, client=client)
+        description = await get_cached_or_compute(cache_key, generate_image_caption, image_bytes, client)
         if not description:
             return {"description": "", "error": "Could not generate description"}
         return {"description": description}

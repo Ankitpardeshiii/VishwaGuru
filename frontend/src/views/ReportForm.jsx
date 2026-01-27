@@ -33,6 +33,8 @@ const ReportForm = ({ setView, setLoading, setError, setActionPlan, loading }) =
   const [analyzingSmartScan, setAnalyzingSmartScan] = useState(false);
   const [submitStatus, setSubmitStatus] = useState({ state: 'idle', message: '' });
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [uploading, setUploading] = useState(false);
+  const [analysisErrors, setAnalysisErrors] = useState({});
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -98,6 +100,7 @@ const ReportForm = ({ setView, setLoading, setError, setActionPlan, loading }) =
     if (!file) return;
     setAnalyzing(true);
     setSeverity(null);
+    setAnalysisErrors(prev => ({ ...prev, severity: null }));
 
     const uploadData = new FormData();
     uploadData.append('image', file);
@@ -110,9 +113,13 @@ const ReportForm = ({ setView, setLoading, setError, setActionPlan, loading }) =
         if (response.ok) {
             const data = await response.json();
             setSeverity(data);
+        } else {
+            const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+            setAnalysisErrors(prev => ({ ...prev, severity: errorData.detail || 'Analysis failed' }));
         }
     } catch (e) {
         console.error("Severity analysis failed", e);
+        setAnalysisErrors(prev => ({ ...prev, severity: 'Network error - please try again' }));
     } finally {
         setAnalyzing(false);
     }
@@ -159,6 +166,7 @@ const ReportForm = ({ setView, setLoading, setError, setActionPlan, loading }) =
       if (!file) return;
       setAnalyzingSmartScan(true);
       setSmartCategory(null);
+      setAnalysisErrors(prev => ({ ...prev, smartScan: null }));
 
       const uploadData = new FormData();
       uploadData.append('image', file);
@@ -175,18 +183,81 @@ const ReportForm = ({ setView, setLoading, setError, setActionPlan, loading }) =
           }
       } catch (e) {
           console.error("Smart scan failed", e);
+          setAnalysisErrors(prev => ({ ...prev, smartScan: 'Smart scan failed - continuing with manual selection' }));
       } finally {
           setAnalyzingSmartScan(false);
       }
   };
 
-  const handleImageChange = (e) => {
-      const file = e.target.files[0];
-      if (file) {
-          setFormData({...formData, image: file});
-          analyzeImage(file);
-          analyzeSmartScan(file);
+  const compressImage = (file, maxWidth = 1024, maxHeight = 1024, quality = 0.8) => {
+    return new Promise((resolve) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+
+      img.onload = () => {
+        // Calculate new dimensions
+        let { width, height } = img;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = (width * maxHeight) / height;
+            height = maxHeight;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        // Draw and compress
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(resolve, 'image/jpeg', quality);
+      };
+
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
+  const handleImageChange = async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setUploading(true);
+      try {
+        // Compress image if it's large
+        let processedFile = file;
+        if (file.size > 1024 * 1024) { // 1MB
+          const compressedBlob = await compressImage(file);
+          processedFile = new File([compressedBlob], file.name, {
+            type: 'image/jpeg',
+            lastModified: Date.now(),
+          });
+        }
+
+        setFormData({...formData, image: processedFile});
+
+        // Analyze in parallel but with error handling
+        await Promise.allSettled([
+          analyzeImage(processedFile),
+          analyzeSmartScan(processedFile)
+        ]);
+      } catch (error) {
+        console.error('Image processing failed:', error);
+        // Fallback to original file
+        setFormData({...formData, image: file});
+        await Promise.allSettled([
+          analyzeImage(file),
+          analyzeSmartScan(file)
+        ]);
+      } finally {
+        setUploading(false);
       }
+    }
   };
 
   const getLocation = () => {
@@ -317,6 +388,12 @@ const ReportForm = ({ setView, setLoading, setError, setActionPlan, loading }) =
                     AI is analyzing image for category...
                 </div>
             )}
+            {analysisErrors.smartScan && (
+                <div className="text-xs text-orange-600 mt-1 flex items-center gap-1">
+                    <AlertTriangle size={12} />
+                    {analysisErrors.smartScan}
+                </div>
+            )}
             {smartCategory && (
                 <div
                     onClick={() => setFormData({...formData, category: smartCategory.mapped})}
@@ -444,8 +521,15 @@ const ReportForm = ({ setView, setLoading, setError, setActionPlan, loading }) =
             </div>
 
             {formData.image && (
-                <div className="text-sm text-green-600 mb-2 text-center">
-                    Selected: {formData.image.name}
+                <div className="text-sm text-green-600 mb-2 text-center flex items-center justify-center gap-2">
+                    {uploading ? (
+                        <>
+                            <Loader2 size={16} className="animate-spin" />
+                            Processing image...
+                        </>
+                    ) : (
+                        <>Selected: {formData.image.name}</>
+                    )}
                 </div>
             )}
 
@@ -482,6 +566,13 @@ const ReportForm = ({ setView, setLoading, setError, setActionPlan, loading }) =
                 <div className="flex items-center justify-center gap-2 text-blue-600 bg-blue-50 p-3 rounded-lg border border-blue-100 animate-pulse">
                     <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
                     <span className="text-sm font-medium">Analyzing severity...</span>
+                </div>
+            )}
+
+            {analysisErrors.severity && (
+                <div className="flex items-center justify-center gap-2 text-red-600 bg-red-50 p-3 rounded-lg border border-red-100">
+                    <AlertTriangle size={16} />
+                    <span className="text-sm font-medium">Severity analysis: {analysisErrors.severity}</span>
                 </div>
             )}
 
