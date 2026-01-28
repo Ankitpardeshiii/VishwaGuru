@@ -72,7 +72,11 @@ from backend.hf_api_service import (
     generate_image_caption,
     analyze_urgency_text,
     verify_resolution_vqa,
-    detect_depth_map
+    detect_depth_map,
+    detect_water_leak_clip,
+    detect_accessibility_issue_clip,
+    detect_crowd_density_clip,
+    detect_audio_event
 )
 
 # Configure structured logging
@@ -1178,6 +1182,98 @@ async def detect_pest_endpoint(request: Request, image: UploadFile = File(...)):
         return {"detections": detections}
     except Exception as e:
         logger.error(f"Pest detection error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/detect-water-leak")
+async def detect_water_leak_endpoint(request: Request, image: UploadFile = File(...)):
+    # Validate uploaded file
+    await validate_uploaded_file(image)
+
+    try:
+        image_bytes = await image.read()
+    except Exception as e:
+        logger.error(f"Invalid image file: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    try:
+        client = request.app.state.http_client
+        detections = await detect_water_leak_clip(image_bytes, client=client)
+        return {"detections": detections}
+    except Exception as e:
+        logger.error(f"Water leak detection error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/detect-accessibility")
+async def detect_accessibility_endpoint(request: Request, image: UploadFile = File(...)):
+    # Validate uploaded file
+    await validate_uploaded_file(image)
+
+    try:
+        image_bytes = await image.read()
+    except Exception as e:
+        logger.error(f"Invalid image file: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    try:
+        client = request.app.state.http_client
+        detections = await detect_accessibility_issue_clip(image_bytes, client=client)
+        return {"detections": detections}
+    except Exception as e:
+        logger.error(f"Accessibility detection error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/detect-crowd")
+async def detect_crowd_endpoint(request: Request, image: UploadFile = File(...)):
+    # Validate uploaded file
+    await validate_uploaded_file(image)
+
+    try:
+        image_bytes = await image.read()
+    except Exception as e:
+        logger.error(f"Invalid image file: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    try:
+        client = request.app.state.http_client
+        detections = await detect_crowd_density_clip(image_bytes, client=client)
+        return {"detections": detections}
+    except Exception as e:
+        logger.error(f"Crowd detection error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/detect-audio")
+async def detect_audio_endpoint(request: Request, file: UploadFile = File(...)):
+    # Basic audio validation
+    # Allow webm (browser default), wav, mp3
+    if file.content_type and not file.content_type.startswith("audio/"):
+         # Some browsers might send application/octet-stream for blobs
+         pass
+
+    # Check simple extension just in case if name is available, but for blob it might be 'blob'
+
+    # Just proceed to read and try
+    # 10MB limit for audio
+    if hasattr(file, 'size') and file.size and file.size > 10 * 1024 * 1024:
+         raise HTTPException(status_code=413, detail="Audio file too large")
+
+    try:
+        audio_bytes = await file.read()
+        if len(audio_bytes) > 10 * 1024 * 1024:
+             raise HTTPException(status_code=413, detail="Audio file too large")
+    except Exception as e:
+        logger.error(f"Invalid audio file: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid audio file")
+
+    try:
+        client = request.app.state.http_client
+        detections = await detect_audio_event(audio_bytes, client=client)
+        return {"detections": detections}
+    except Exception as e:
+        logger.error(f"Audio detection error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

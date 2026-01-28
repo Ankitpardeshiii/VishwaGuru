@@ -13,19 +13,22 @@ token = os.environ.get("HF_TOKEN")
 headers = {"Authorization": f"Bearer {token}"} if token else {}
 
 # Zero-Shot Image Classification Model
-CLIP_API_URL = "https://api-inference.huggingface.co/models/openai/clip-vit-base-patch32"
+CLIP_API_URL = "https://router.huggingface.co/models/openai/clip-vit-base-patch32"
 
 # Image Captioning Model
-CAPTION_API_URL = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
+CAPTION_API_URL = "https://router.huggingface.co/models/Salesforce/blip-image-captioning-large"
 
 # Sentiment Analysis / Text Classification Model
-SENTIMENT_API_URL = "https://api-inference.huggingface.co/models/cardiffnlp/twitter-roberta-base-sentiment-latest"
+SENTIMENT_API_URL = "https://router.huggingface.co/models/cardiffnlp/twitter-roberta-base-sentiment-latest"
 
 # Visual Question Answering Model
-VQA_API_URL = "https://api-inference.huggingface.co/models/dandelin/vilt-b32-finetuned-vqa"
+VQA_API_URL = "https://router.huggingface.co/models/dandelin/vilt-b32-finetuned-vqa"
 
 # Depth Estimation Model
-DEPTH_API_URL = "https://api-inference.huggingface.co/models/Intel/dpt-hybrid-midas"
+DEPTH_API_URL = "https://router.huggingface.co/models/Intel/dpt-hybrid-midas"
+
+# Audio Classification Model
+AUDIO_CLASS_API_URL = "https://router.huggingface.co/models/MIT/ast-finetuned-audioset-10-10-0.4593"
 
 async def _make_request(client, url, payload):
     try:
@@ -119,6 +122,49 @@ async def detect_pest_clip(image: Union[Image.Image, bytes], client: httpx.Async
     labels = ["rat", "cockroach", "mosquito swarm", "pest infestation", "clean", "no pests"]
     targets = ["rat", "cockroach", "mosquito swarm", "pest infestation"]
     return await _detect_clip_generic(image, labels, targets, client)
+
+async def detect_water_leak_clip(image: Union[Image.Image, bytes], client: httpx.AsyncClient = None):
+    labels = ["water leak", "burst pipe", "flooded floor", "puddle", "dry floor", "no water"]
+    targets = ["water leak", "burst pipe", "flooded floor", "puddle"]
+    return await _detect_clip_generic(image, labels, targets, client)
+
+async def detect_accessibility_issue_clip(image: Union[Image.Image, bytes], client: httpx.AsyncClient = None):
+    labels = ["blocked wheelchair ramp", "stairs without ramp", "broken ramp", "accessible path", "wheelchair accessible", "clear path"]
+    targets = ["blocked wheelchair ramp", "stairs without ramp", "broken ramp"]
+    return await _detect_clip_generic(image, labels, targets, client)
+
+async def detect_crowd_density_clip(image: Union[Image.Image, bytes], client: httpx.AsyncClient = None):
+    labels = ["dense crowd", "dangerous overcrowding", "sparse crowd", "empty space", "safe crowd level"]
+    # We want to detect high density
+    targets = ["dense crowd", "dangerous overcrowding"]
+    return await _detect_clip_generic(image, labels, targets, client)
+
+async def detect_audio_event(audio_bytes: bytes, client: httpx.AsyncClient = None):
+    """
+    Detects audio events from audio bytes using MIT/ast-finetuned-audioset-10-10-0.4593.
+    """
+    # The Audio Classification API accepts raw audio bytes
+    try:
+        headers_bin = {"Authorization": f"Bearer {token}"} if token else {}
+        async def do_post(c):
+             return await c.post(AUDIO_CLASS_API_URL, headers=headers_bin, content=audio_bytes, timeout=30.0)
+
+        if client:
+            response = await do_post(client)
+        else:
+            async with httpx.AsyncClient() as new_client:
+                response = await do_post(new_client)
+
+        if response.status_code == 200:
+            # Result is usually [{"score": 0.9, "label": "speech"}, ...]
+            data = response.json()
+            return data
+        else:
+            logger.error(f"Audio API Error: {response.status_code} - {response.text}")
+            return []
+    except Exception as e:
+        logger.error(f"Audio Detection Error: {e}")
+        return []
 
 async def detect_severity_clip(image: Union[Image.Image, bytes], client: httpx.AsyncClient = None):
     """

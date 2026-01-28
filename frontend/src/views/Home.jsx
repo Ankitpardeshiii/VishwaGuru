@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, MapPin, Search, Activity, Camera, Trash2, ThumbsUp, Brush,
   Droplets, Zap, Truck, Flame, Dog, XCircle, Lightbulb, TreeDeciduous, Bug,
-  Scan, ChevronRight, LayoutGrid, Shield, Leaf, Building, CheckCircle, Trophy, Monitor
+  Scan, ChevronRight, LayoutGrid, Shield, Leaf, Building, CheckCircle, Trophy, Monitor,
+  Volume2, Users, Waves, Accessibility
 } from 'lucide-react';
 
 const CameraCheckModal = ({ onClose }) => {
@@ -76,6 +77,9 @@ const Home = ({ setView, fetchResponsibilityMap, recentIssues, handleUpvote }) =
         { id: 'tree', label: t('home.issues.treeHazard'), icon: <TreeDeciduous size={24} />, color: 'text-green-600', bg: 'bg-green-50' },
         { id: 'animal', label: t('home.issues.strayAnimal'), icon: <Dog size={24} />, color: 'text-amber-600', bg: 'bg-amber-50' },
         { id: 'pest', label: t('home.issues.pestControl'), icon: <Bug size={24} />, color: 'text-amber-800', bg: 'bg-amber-50' },
+        { id: 'noise', label: "Noise", icon: <Volume2 size={24} />, color: 'text-purple-600', bg: 'bg-purple-50' },
+        { id: 'crowd', label: "Crowd", icon: <Users size={24} />, color: 'text-red-500', bg: 'bg-red-50' },
+        { id: 'water-leak', label: "Water Leak", icon: <Waves size={24} />, color: 'text-blue-500', bg: 'bg-blue-50' },
       ]
     },
     {
@@ -86,6 +90,7 @@ const Home = ({ setView, fetchResponsibilityMap, recentIssues, handleUpvote }) =
         { id: 'infrastructure', label: t('home.issues.brokenInfra'), icon: <Zap size={24} />, color: 'text-yellow-600', bg: 'bg-yellow-50' },
         { id: 'vandalism', label: t('home.issues.graffiti'), icon: <Brush size={24} />, color: 'text-indigo-600', bg: 'bg-indigo-50' },
         { id: 'mh-rep', label: t('home.issues.findMLA'), icon: <Search size={24} />, color: 'text-purple-600', bg: 'bg-purple-50' },
+        { id: 'accessibility', label: "Accessibility", icon: <Accessibility size={24} />, color: 'text-teal-600', bg: 'bg-teal-50' },
       ]
     }
   ];
