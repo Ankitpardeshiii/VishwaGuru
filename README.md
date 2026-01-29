@@ -131,8 +131,9 @@ graph TD
 
 | Component | Version | Purpose |
 |-----------|---------|---------|
+| 🐍 **Python** | 3.12+ | Backend runtime and AI services |
 | ⚛️ **Node.js** | 20+ | Frontend build tools |
-| 📦 **npm** | Latest | Package management |
+| 📦 **npm** | 10+ | Package management |
 | 🐙 **Git** | 2.0+ | Version control |
 
 </div>
@@ -227,6 +228,8 @@ npm install
 | 🌐 **Netlify + Render** | Netlify | Render | Neon/PostgreSQL | 🟡 Medium |
 | 🐙 **Railway** | Built-in | Built-in | Built-in | 🟢 Easy |
 | ☁️ **Vercel + Railway** | Vercel | Railway | Railway | 🟡 Medium |
+
+> **Note:** Free tiers on these platforms have usage limits. Check current pricing and limits before deployment.
 
 </div>
 
