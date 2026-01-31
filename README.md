@@ -307,6 +307,53 @@ frontend/                # Frontend tests via Jest
 
 ---
 
+### Repository structure 
+
+```
+
+📦 Project Root
+├── .github/                 # GitHub workflows & configs
+├── docs/                    # All documentation
+│   ├── architecture/        # System design & architecture
+│   ├── deployment/          # Deployment guides & checklists
+│   ├── prs/                 # Pull request reports
+│   ├── issues/              # Issue fix summaries
+│   ├── guides/              # UI, API, quick references
+│   └── OVERVIEW.md          # High-level project overview
+│
+├── backend/                 # Backend service
+│   ├── app/                 # Core application logic
+│   ├── services/            # Business logic & helpers
+│   ├── routes/              # API routes
+│   └── start-backend.py     # Backend entry point
+│
+├── frontend/                # Frontend application
+├── functions/               # Firebase / serverless functions
+│
+├── scripts/                 # Automation & utilities
+│   ├── deploy/              # Deployment scripts
+│   ├── verification/        # Validation & health checks
+│   ├── tests/               # API & route tests
+│   └── utils/               # Helper scripts
+│
+├── config/                  # Environment & platform configs
+│   ├── firebase.json
+│   ├── .firebaserc
+│   ├── render.yaml
+│   └── netlify.toml
+│
+├── data/                    # Static / sample datasets
+├── tests/                   # Unit & integration tests
+│
+├── .env.example             # Environment variable template
+├── .gitignore
+├── README.md
+└── LICENSE
+
+```
+
+---
+
 ## ☁️ Deployment Options
 
 <div align="center">
